@@ -1,0 +1,66 @@
+name: publish-future-image
+
+on:
+  push:
+    branches:
+      - future
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/zhizhishu/cliproxyapi
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Refresh models catalog
+        run: |
+          git fetch --depth 1 https://github.com/router-for-me/models.git main
+          git show FETCH_HEAD:models.json > internal/registry/models/models.json
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate build metadata
+        run: |
+          echo "VERSION=future" >> "$GITHUB_ENV"
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=future
+            type=sha,prefix=future-,format=short
+          labels: |
+            org.opencontainers.image.source=https://github.com/zhizhishu/CLIProxyAPI
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
