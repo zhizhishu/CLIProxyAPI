@@ -66,6 +66,43 @@ func TestLookupAPIKeyUpstreamModel(t *testing.T) {
 	}
 }
 
+func TestLookupAPIKeyUpstreamModel_ClaudeOneMillionAlias(t *testing.T) {
+	cfg := &internalconfig.Config{
+		ClaudeKey: []internalconfig.ClaudeKey{
+			{
+				APIKey:  "k",
+				BaseURL: "https://anyrouter.top",
+				Models: []internalconfig.ClaudeModel{
+					{Name: "claude-opus-4-7", Alias: "claude-opus-4-7"},
+					{Name: "claude-opus-4-7", Alias: "claude-opus-4-7[1m]"},
+				},
+			},
+		},
+	}
+
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(cfg)
+
+	ctx := context.Background()
+	auth := &Auth{
+		ID:         "claude-auth",
+		Provider:   "claude",
+		Attributes: map[string]string{"api_key": "k", "base_url": "https://anyrouter.top"},
+	}
+	_, _ = mgr.Register(ctx, auth)
+
+	for _, input := range []string{"claude-opus-4-7", "claude-opus-4-7[1m]"} {
+		if resolved := mgr.lookupAPIKeyUpstreamModel("claude-auth", input); resolved != "claude-opus-4-7" {
+			t.Fatalf("lookupAPIKeyUpstreamModel(%q) = %q, want claude-opus-4-7", input, resolved)
+		}
+	}
+
+	candidates := mgr.executionModelCandidates(auth, "claude-opus-4-7[1m]")
+	if len(candidates) != 1 || candidates[0] != "claude-opus-4-7" {
+		t.Fatalf("executionModelCandidates = %#v, want [claude-opus-4-7]", candidates)
+	}
+}
+
 func TestAPIKeyModelAlias_ConfigHotReload(t *testing.T) {
 	cfg := &internalconfig.Config{
 		GeminiKey: []internalconfig.GeminiKey{

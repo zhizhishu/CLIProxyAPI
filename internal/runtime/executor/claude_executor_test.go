@@ -31,6 +31,258 @@ func resetClaudeDeviceProfileCache() {
 	helps.ResetClaudeDeviceProfileCache()
 }
 
+func TestOneMillionContextBeta_OnlyWhenSuffixRequested(t *testing.T) {
+	if isClaudeOneMillionContextRequested("claude-opus-4-7") {
+		t.Fatal("plain claude-opus-4-7 should not request 1m context")
+	}
+
+	if !isClaudeOneMillionContextRequested("claude-opus-4-7[1m]") {
+		t.Fatal("claude-opus-4-7[1m] should request 1m context")
+	}
+
+	got := ensureClaudeBeta([]string{"existing-beta"}, claudeOneMillionContextBeta)
+	if len(got) != 2 {
+		t.Fatalf("betas len = %d, want 2: %#v", len(got), got)
+	}
+	if got[0] != "existing-beta" {
+		t.Fatalf("first beta = %q, want existing-beta", got[0])
+	}
+	if got[1] != claudeOneMillionContextBeta {
+		t.Fatalf("second beta = %q, want %q", got[1], claudeOneMillionContextBeta)
+	}
+}
+
+func TestNormalizeClaudeOneMillionContextModel_StripsProviderSuffix(t *testing.T) {
+	got, ok := normalizeClaudeOneMillionContextModel("claude-opus-4-7[1m]")
+	if !ok {
+		t.Fatal("normalizeClaudeOneMillionContextModel ok = false, want true")
+	}
+	if got != "claude-opus-4-7" {
+		t.Fatalf("normalized model = %q, want claude-opus-4-7", got)
+	}
+
+	got, ok = normalizeClaudeOneMillionContextModel("claude-opus-4-7[1m](8192)")
+	if !ok {
+		t.Fatal("normalizeClaudeOneMillionContextModel with thinking suffix ok = false, want true")
+	}
+	if got != "claude-opus-4-7(8192)" {
+		t.Fatalf("normalized model = %q, want claude-opus-4-7(8192)", got)
+	}
+}
+
+func TestEnsureClaudeBeta_Dedup(t *testing.T) {
+	existing := []string{claudeOneMillionContextBeta}
+	got := ensureClaudeBeta(existing, claudeOneMillionContextBeta)
+	if len(got) != 1 || got[0] != claudeOneMillionContextBeta {
+		t.Fatalf("dedup betas = %#v, want one %q", got, claudeOneMillionContextBeta)
+	}
+}
+
+func TestEnsureClaudeOneMillionMetadata_ReplacesLegacyUserID(t *testing.T) {
+	legacyID := "user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_account_11111111-1111-4111-8111-111111111111_session_22222222-2222-4222-8222-222222222222"
+	body := []byte(`{"metadata":{"user_id":"` + legacyID + `"},"messages":[]}`)
+
+	out := ensureClaudeOneMillionMetadata(body, "key-123")
+	userID := gjson.GetBytes(out, "metadata.user_id").String()
+
+	if userID == "" {
+		t.Fatal("metadata.user_id should be populated")
+	}
+	if helps.IsValidUserID(userID) {
+		t.Fatalf("metadata.user_id should use Claude Code JSON metadata, got legacy id %q", userID)
+	}
+	if !isClaudeCodeMetadataUserID(userID) {
+		t.Fatalf("metadata.user_id is not Claude Code metadata JSON: %q", userID)
+	}
+}
+
+func TestEnsureClaudeOneMillionMetadata_PreservesClaudeCodeMetadata(t *testing.T) {
+	existing := `{"device_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","account_uuid":"","session_id":"33333333-3333-4333-8333-333333333333"}`
+	body, _ := sjson.SetBytes([]byte(`{"messages":[]}`), "metadata.user_id", existing)
+
+	out := ensureClaudeOneMillionMetadata(body, "key-123")
+
+	if got := gjson.GetBytes(out, "metadata.user_id").String(); got != existing {
+		t.Fatalf("metadata.user_id = %q, want preserved %q", got, existing)
+	}
+}
+
+func TestExtractAndRemoveBetas_AcceptsAnthropicBetaAlias(t *testing.T) {
+	body := []byte(`{"model":"claude-opus-4-7","betas":["custom-beta"],"anthropic_beta":["context-1m-2025-08-07"],"messages":[]}`)
+
+	betas, out := extractAndRemoveBetas(body)
+
+	if len(betas) != 2 {
+		t.Fatalf("betas len = %d, want 2: %#v", len(betas), betas)
+	}
+	if betas[0] != "custom-beta" || betas[1] != claudeOneMillionContextBeta {
+		t.Fatalf("betas = %#v, want custom-beta and %q", betas, claudeOneMillionContextBeta)
+	}
+	if gjson.GetBytes(out, "betas").Exists() {
+		t.Fatalf("betas field should be removed from upstream body: %s", string(out))
+	}
+	if gjson.GetBytes(out, "anthropic_beta").Exists() {
+		t.Fatalf("anthropic_beta field should be removed from upstream body: %s", string(out))
+	}
+}
+
+func TestEnsureAnthropicBetaHeader_PreservesCustomBetasAndAddsOneMillion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Anthropic-Beta", "custom-beta")
+
+	ensureAnthropicBetaHeader(headers, []string{claudeOneMillionContextBeta})
+
+	got := headers.Get("Anthropic-Beta")
+	if !strings.Contains(got, "custom-beta") {
+		t.Fatalf("Anthropic-Beta = %q, want custom-beta", got)
+	}
+	if !strings.Contains(got, claudeOneMillionContextBeta) {
+		t.Fatalf("Anthropic-Beta = %q, want %q", got, claudeOneMillionContextBeta)
+	}
+}
+
+func TestBuildClaudeEndpoint_DeduplicatesV1(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "root base",
+			baseURL:  "https://anyrouter.top",
+			endpoint: "/v1/messages?beta=true",
+			want:     "https://anyrouter.top/v1/messages?beta=true",
+		},
+		{
+			name:     "root base with trailing slash",
+			baseURL:  "https://anyrouter.top/",
+			endpoint: "/v1/messages?beta=true",
+			want:     "https://anyrouter.top/v1/messages?beta=true",
+		},
+		{
+			name:     "versioned base",
+			baseURL:  "https://anyrouter.top/v1",
+			endpoint: "/v1/messages/count_tokens?beta=true",
+			want:     "https://anyrouter.top/v1/messages/count_tokens?beta=true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildClaudeEndpoint(tt.baseURL, tt.endpoint); got != tt.want {
+				t.Fatalf("buildClaudeEndpoint() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyClaudeHeaders_CustomBetaKeepsClaudeCodeAndOneMillion(t *testing.T) {
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":               "key-123",
+		"header:Anthropic-Beta": "custom-beta",
+	}}
+	req := newClaudeHeaderTestRequest(t, nil)
+
+	applyClaudeHeaders(req, auth, "key-123", false, []string{claudeOneMillionContextBeta}, &config.Config{})
+
+	got := req.Header.Get("Anthropic-Beta")
+	for _, want := range []string{"custom-beta", claudeCodeBeta, claudeOneMillionContextBeta} {
+		if !containsClaudeBeta(got, want) {
+			t.Fatalf("Anthropic-Beta = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestApplyClaudeHeaders_IncomingOneMillionBetaKeepsClaudeCode(t *testing.T) {
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key": "key-123",
+	}}
+	req := newClaudeHeaderTestRequest(t, http.Header{
+		"Anthropic-Beta": []string{claudeOneMillionContextBeta},
+	})
+
+	applyClaudeHeaders(req, auth, "key-123", false, nil, &config.Config{})
+
+	got := req.Header.Get("Anthropic-Beta")
+	for _, want := range []string{claudeCodeBeta, claudeOneMillionContextBeta} {
+		if !containsClaudeBeta(got, want) {
+			t.Fatalf("Anthropic-Beta = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestClaudeExecutor_OneMillionRequestedAliasStripsSuffixAndAddsBeta(t *testing.T) {
+	var seenHeader http.Header
+	var seenBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHeader = r.Header.Clone()
+		body, _ := io.ReadAll(r.Body)
+		seenBody = bytes.Clone(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "key-123",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
+
+	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("claude"),
+		Metadata: map[string]any{
+			cliproxyexecutor.RequestedModelMetadataKey: "claude-opus-4-7[1m]",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := gjson.GetBytes(seenBody, "model").String(); got != "claude-opus-4-7" {
+		t.Fatalf("upstream model = %q, want claude-opus-4-7", got)
+	}
+	if got := seenHeader.Get("Anthropic-Beta"); !containsClaudeBeta(got, claudeOneMillionContextBeta) {
+		t.Fatalf("Anthropic-Beta = %q, want %q", got, claudeOneMillionContextBeta)
+	}
+	if got := gjson.GetBytes(seenBody, "metadata.user_id").String(); !isClaudeCodeMetadataUserID(got) {
+		t.Fatalf("metadata.user_id = %q, want Claude Code metadata JSON", got)
+	}
+}
+
+func TestClaudeExecutor_PlainOpus47DoesNotAddOneMillionBeta(t *testing.T) {
+	var seenHeader http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHeader = r.Header.Clone()
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "key-123",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
+
+	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := seenHeader.Get("Anthropic-Beta"); containsClaudeBeta(got, claudeOneMillionContextBeta) {
+		t.Fatalf("Anthropic-Beta = %q, should not include %q", got, claudeOneMillionContextBeta)
+	}
+}
+
 func newClaudeHeaderTestRequest(t *testing.T, incoming http.Header) *http.Request {
 	t.Helper()
 
