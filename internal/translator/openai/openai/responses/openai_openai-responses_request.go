@@ -42,8 +42,6 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	// Map generation parameters from responses format to chat completions format
 	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
 		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
-	} else if maxTokens := root.Get("max_tokens"); maxTokens.Exists() {
-		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
 	}
 
 	if parallelToolCalls := root.Get("parallel_tool_calls"); parallelToolCalls.Exists() {
@@ -57,14 +55,8 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		out, _ = sjson.SetRawBytes(out, "messages.-1", systemMessage)
 	}
 
-	// Convert input to messages
-	if input := root.Get("input"); input.Exists() && input.Type == gjson.String {
-		if text := input.String(); text != "" {
-			message := []byte(`{"role":"user","content":""}`)
-			message, _ = sjson.SetBytes(message, "content", text)
-			out, _ = sjson.SetRawBytes(out, "messages.-1", message)
-		}
-	} else if input := root.Get("input"); input.Exists() && input.IsArray() {
+	// Convert input array to messages
+	if input := root.Get("input"); input.Exists() && input.IsArray() {
 		inputItems := input.Array()
 		outputCallIDs := make(map[string]struct{})
 		for _, item := range inputItems {
