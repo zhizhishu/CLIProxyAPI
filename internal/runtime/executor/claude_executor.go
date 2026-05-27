@@ -48,16 +48,6 @@ const claudeCodeBeta = "claude-code-20250219"
 const claudeOneMillionContextBeta = "context-1m-2025-08-07"
 const claudeOneMillionContextSuffix = "[1m]"
 
-func normalizeClaudeUpstreamErrorStatus(status int, body []byte) int {
-	if status != http.StatusTooManyRequests {
-		return status
-	}
-	if strings.Contains(strings.ToLower(string(body)), "service unavailable") {
-		return http.StatusServiceUnavailable
-	}
-	return status
-}
-
 // oauthToolRenameMap maps OpenCode-style (lowercase) tool names to Claude Code-style
 // (TitleCase) names. Anthropic uses tool name fingerprinting to detect third-party
 // clients on OAuth traffic. Renaming to official names avoids extra-usage billing.
@@ -279,7 +269,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		err = statusErr{code: normalizeClaudeUpstreamErrorStatus(httpResp.StatusCode, b), msg: string(b)}
+		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 		if errClose := errBody.Close(); errClose != nil {
 			log.Errorf("response body close error: %v", errClose)
 		}
@@ -469,7 +459,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		if errClose := errBody.Close(); errClose != nil {
 			log.Errorf("response body close error: %v", errClose)
 		}
-		err = statusErr{code: normalizeClaudeUpstreamErrorStatus(httpResp.StatusCode, b), msg: string(b)}
+		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
 		return nil, err
 	}
 	decodedBody, err := decodeResponseBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
@@ -717,7 +707,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 		if errClose := errBody.Close(); errClose != nil {
 			log.Errorf("response body close error: %v", errClose)
 		}
-		return cliproxyexecutor.Response{}, statusErr{code: normalizeClaudeUpstreamErrorStatus(resp.StatusCode, b), msg: string(b)}
+		return cliproxyexecutor.Response{}, statusErr{code: resp.StatusCode, msg: string(b)}
 	}
 	decodedBody, err := decodeResponseBody(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
