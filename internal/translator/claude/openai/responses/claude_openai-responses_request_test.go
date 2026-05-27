@@ -6,6 +6,30 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestConvertOpenAIResponsesRequestToClaude_StringInputAndMaxTokens(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-test",
+		"input":"hello from responses",
+		"max_tokens":1234
+	}`)
+
+	out := ConvertOpenAIResponsesRequestToClaude("claude-test", raw, true)
+	root := gjson.ParseBytes(out)
+
+	if got := root.Get("messages.0.role").String(); got != "user" {
+		t.Fatalf("message role = %q, want user. Output: %s", got, string(out))
+	}
+	if got := root.Get("messages.0.content").String(); got != "hello from responses" {
+		t.Fatalf("message content = %q, want string input. Output: %s", got, string(out))
+	}
+	if got := root.Get("max_tokens").Int(); got != 1234 {
+		t.Fatalf("max_tokens = %d, want 1234. Output: %s", got, string(out))
+	}
+	if got := root.Get("stream").Bool(); !got {
+		t.Fatalf("stream = false, want true. Output: %s", string(out))
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToClaude_ReasoningItemToThinkingBlock(t *testing.T) {
 	signature := "claude_sig_request"
 	raw := []byte(`{

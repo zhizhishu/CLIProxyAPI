@@ -119,6 +119,8 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 	// Max tokens
 	if mot := root.Get("max_output_tokens"); mot.Exists() {
 		out, _ = sjson.SetBytes(out, "max_tokens", mot.Int())
+	} else if mt := root.Get("max_tokens"); mt.Exists() {
+		out, _ = sjson.SetBytes(out, "max_tokens", mt.Int())
 	}
 
 	// Stream
@@ -167,7 +169,7 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 		}
 	}
 
-	// input array processing
+	// input processing
 	var pendingReasoningParts []string
 	flushPendingReasoning := func() {
 		if len(pendingReasoningParts) == 0 {
@@ -181,7 +183,13 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 		pendingReasoningParts = nil
 	}
 
-	if input := root.Get("input"); input.Exists() && input.IsArray() {
+	if input := root.Get("input"); input.Exists() && input.Type == gjson.String {
+		if text := input.String(); text != "" {
+			msg := []byte(`{"role":"user","content":""}`)
+			msg, _ = sjson.SetBytes(msg, "content", text)
+			out, _ = sjson.SetRawBytes(out, "messages.-1", msg)
+		}
+	} else if input := root.Get("input"); input.Exists() && input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
 			if extractedFromSystem && strings.EqualFold(item.Get("role").String(), "system") {
 				return true

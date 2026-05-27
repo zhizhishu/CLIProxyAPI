@@ -19,6 +19,28 @@ func prettyJSONForTest(raw []byte) string {
 	return out.String()
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_StringInputAndMaxTokens(t *testing.T) {
+	raw := []byte(`{
+		"input":"hello from responses",
+		"max_tokens":1234
+	}`)
+
+	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("kimi-k2.6", raw, true)
+
+	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "user" {
+		t.Fatalf("message role = %q, want user. Output: %s", got, prettyJSONForTest(out))
+	}
+	if got := gjson.GetBytes(out, "messages.0.content").String(); got != "hello from responses" {
+		t.Fatalf("message content = %q, want string input. Output: %s", got, prettyJSONForTest(out))
+	}
+	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 1234 {
+		t.Fatalf("max_tokens = %d, want 1234. Output: %s", got, prettyJSONForTest(out))
+	}
+	if got := gjson.GetBytes(out, "stream").Bool(); !got {
+		t.Fatalf("stream = false, want true. Output: %s", prettyJSONForTest(out))
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFunctionCalls(t *testing.T) {
 	raw := []byte(`{
 		"input": [
