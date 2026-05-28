@@ -17,6 +17,7 @@ refs/*
 pgstore/*
 gitstore/*
 objectstore/*
+anyrouter-1m-sidecar/*
 
 # Static assets
 static/*

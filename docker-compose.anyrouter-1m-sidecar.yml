@@ -1,0 +1,21 @@
+services:
+  anyrouter-1m-sidecar:
+    image: ${ANYROUTER_1M_SIDECAR_IMAGE:-ghcr.io/zhizhishu/anyrouter-1m-sidecar:future}
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile.anyrouter-1m-sidecar
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-none}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    container_name: anyrouter-1m-sidecar
+    environment:
+      ANYROUTER_1M_LISTEN: ":8787"
+      ANYROUTER_UPSTREAM: ${ANYROUTER_UPSTREAM:-https://anyrouter.top}
+      ANYROUTER_1M_ADMIN_TOKEN: ${ANYROUTER_1M_ADMIN_TOKEN:-}
+    ports:
+      - "${ANYROUTER_1M_PORT:-8787}:8787"
+    volumes:
+      - ${ANYROUTER_1M_CONFIG_DIR:-./anyrouter-1m-sidecar}:/app/config
+    restart: unless-stopped

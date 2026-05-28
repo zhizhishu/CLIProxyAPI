@@ -1,0 +1,26 @@
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o ./anyrouter-1m-sidecar ./cmd/anyrouter_1m_sidecar
+
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+COPY --from=builder /app/anyrouter-1m-sidecar /app/anyrouter-1m-sidecar
+
+EXPOSE 8787
+ENV ANYROUTER_1M_CONFIG=/app/config/anyrouter-1m-sidecar.json
+
+CMD ["/app/anyrouter-1m-sidecar"]
